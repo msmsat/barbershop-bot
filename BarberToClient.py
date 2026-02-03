@@ -355,8 +355,12 @@ async def set_pay_crypto(call: CallbackQuery):
     service_id = int(u_rows[0][0])
 
     # Получаем цену из services
+    # Получаем цену из services
     s_rows = await database.fetch_all("SELECT price FROM services WHERE id = ?", (service_id,))
-    price = int(s_rows[0])
+    if s_rows: price = int(s_rows[0][0])  # <--- Берем первый элемент кортежа
+    else:
+        await call.answer("Ошибка: цена не найдена")
+        return
 
     # 3. Создаем инвойс
     # Вызываем твою функцию создания инвойса
@@ -367,9 +371,10 @@ async def set_pay_crypto(call: CallbackQuery):
 
     # 4. Обработка ОШИБКИ создания
     if invoice_id is None or bot_url is None:
+        if j == 502: msg = "❌ Не удалось создать счёт автоматически. Проблемы на сервере крипты — Попробуйте снова позже"
+        else: msg = "❌ Не удалось создать счёт автоматически — Попробуйте снова"
         await call.message.edit_text(
-            "❌ Не удалось создать счёт автоматически — Попробуйте снова",
-            reply_markup=client_kb.crypto_actions_kb(date_d_str, date_t_str, idbook, bot_url=None),
+            msg, reply_markup=client_kb.crypto_actions_kb(date_d_str, date_t_str, idbook, bot_url=None),
             parse_mode="HTML"
         )
         return
@@ -578,9 +583,25 @@ async def successful_payment(message: Message):
     await database.execute("UPDATE bookings SET telegram_payment_charge_id = ? WHERE id = ?", (charge_id, idbook))
 
     # Подтверждение
+    try:
+        # 1. Получаем ID барбера из брони
+        barber_id_row = await database.fetch_one("SELECT barber_id FROM bookings WHERE id=?", (int(idbook),))
+        if barber_id_row:
+            bid = barber_id_row[0]
+            # 2. Получаем Telegram ID барбера
+            tg_row = await database.fetch_one("SELECT telegram_id FROM barbers WHERE id=?", (bid,))
+            if tg_row:
+                barber_tg_id = tg_row[0]
+                # 3. Формируем текст (используем переменные, которые уже есть в функции: date_d, date_t_str, end_t_str)
+                user_name = f"@{message.from_user.username}" if message.from_user.username else f"ID: {message.from_user.id}"
+                msg_to_barber = (f"💰 <b>Новая оплаченная запись!</b>\n"
+                    f"👤 Клиент: {user_name}\n🗓 Дата: {date_d.day}.{date_d.month}.{date_d.year}\n"
+                    f"⏰ Время: {date_t_str} - {end_t_str}\n💳 Тип оплаты: {paid_think}")
+                # 4. Отправляем сообщение барберу
+                await loader.bot_barber.send_message(barber_tg_id, msg_to_barber, parse_mode="HTML")
+    except Exception as e: print(f"⚠️ Не удалось уведомить барбера об оплате: {e}")
     text = f"\nДата: {date_d.day}.{date_d.month}.{date_d.year}\nВремя: {date_t_str} - {end_t_str}\nМастер: {barber_name}"
     await message.answer(f"✅ Оплата прошла успешно! {text}", reply_markup=client_kb.success_kb(), parse_mode="HTML")
-
 
 # --- Старый main можно оставить для локальных тестов, но через barbershopbot работает dp.startup ---
 async def main():

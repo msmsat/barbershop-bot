@@ -347,10 +347,15 @@ async def create_crypto_invoice(amount: float, desc: str, payload: str) -> Tuple
     async with aiohttp.ClientSession() as session:  # Создаем сессию
         for endpoint in ("/api/createInvoice", "/api/create_invoice"):
             try:
+                print('2')
                 async with session.post(CRYPTOPAY_BASE + endpoint, json=body, headers=headers, timeout=10) as r:
                     if r.status == 200:
                         j = await r.json()
                         return j, j['result']['invoice_id'], j['result']['bot_invoice_url']
+                    else:
+                        print(r.status)
+                        print('NOOOOOOOOOOOOOOOOOOOOOOOOO')
+                        return 502, None, None
             except Exception as e:
                 logger.error(f"Crypto invoice error: {e}")
         return None, None, None
