@@ -46,5 +46,5 @@
 
 ### 1. Клонирование репозитория
 ```bash
-git clone [https://github.com/msmat/BarberShop-Bot.git](https://github.com/msmat/BarberShop-Bot.git)
+git clone [https://github.com/msmsat/BarberShop-Bot.git](https://github.com/msmsat/BarberShop-Bot.git)
 cd BarberShop-Bot
