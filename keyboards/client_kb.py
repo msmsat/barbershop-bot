@@ -166,7 +166,9 @@ def calendar_kb(year, month, service_id, idbook=None):
     inline.append(nav)
     
     # Выход
-    back_target = f"service_{service_id}"
+    
+    if idbook: back_target = f"sett_book_{idbook}"
+    else: back_target = f"service_{service_id}"
     inline.append(_back_btn(back_target))
     return InlineKeyboardMarkup(inline_keyboard=inline)
 

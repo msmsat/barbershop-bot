@@ -78,15 +78,15 @@ async def my_bookings_handler(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("sett_book_"))
 async def set_booking_handler(call: CallbackQuery):
     # 1. Логика ИЗМЕНЕНИЯ (если нажали перенос)
+    # 1. Логика ИЗМЕНЕНИЯ (если нажали перенос)
     if call.data.startswith("sett_book_change_"):
-        # Парсим данные
-        _, _, date_d, date_t, duration, idbook = call.data.split("_")
+        # Используем срез строки, чтобы убрать префикс 'sett_book_change_',
+        # и только потом разбиваем оставшуюся часть
+        data_parts = call.data[len("sett_book_change_"):].split("_")
+        date_d, date_t, duration, idbook = data_parts
         idbook = int(idbook)
-
-        # Вызываем нашу новую профессиональную функцию из services
-        result = await services.reschedule_booking(
-            idbook, date_d, date_t, int(duration), call.from_user.username or "Client"
-        )
+        # Вызываем нашу функцию из services
+        result = await services.reschedule_booking(idbook, date_d, date_t, int(duration), call.from_user.username or "Client")
 
         # Если успешно перенесли — уведомляем барбера
         if result:
@@ -395,15 +395,22 @@ async def set_pay_crypto(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("crypto_api_check_"))
 async def set_crypto_api_check(call: CallbackQuery):
     if call.data.startswith("crypto_api_check_pay_"):
-        idbook = call.data[len("crypto_api_check_pay_"):].split("_")
+        # 1. Исправляем извлечение ID (берем [0], чтобы получить строку, а не список)
+        idbook = call.data[len("crypto_api_check_pay_"):].split("_")[0]
         usr_id = call.from_user.id
-        invoice_id, bot_url, date_d_str, date_t_str, service_id = await database.fetch_one(
-            "SELECT crypto_invoice FROM users WHERE name = ?", (usr_id,)).split("_")
+        # 2. Исправляем получение данных из БД (сначала получаем кортеж, потом берем элемент [0])
+        row = await database.fetch_one("SELECT crypto_invoice FROM users WHERE name = ?", (usr_id,))
+        if not row or not row[0]:
+            await call.answer("Данные счета устарели. Попробуйте создать счет заново.", show_alert=True)
+            return
+        invoice_id, bot_url, date_d_str, date_t_str, service_id = row[0].split("_")
         call_data = f"crypto_api_check_pay_{invoice_id}_{idbook}"
     else:
         usr_id = call.from_user.id
         crypto_info = await database.fetch_one("SELECT crypto_invoice FROM users WHERE name = ?", (usr_id,))
-        print(crypto_info)
+        if not crypto_info or not crypto_info[0]:
+            await call.answer("Ошибка данных. Начните сначала.", show_alert=True)
+            return
         invoice_id, bot_url, date_d_str, date_t_str, service_id = crypto_info[0].split("_")
         call_data = f"crypto_api_check_{invoice_id}"
     status = await services.check_crypto_invoice_status(int(invoice_id))
