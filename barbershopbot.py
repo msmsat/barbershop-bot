@@ -28,9 +28,9 @@ async def main():
     # Запускаем polling для каждого бота как отдельные задачи
     # start_polling() — асинхронная функция, которая корректно работает в gather
     polling_tasks = [
-        asyncio.create_task(dp_barber.start_polling(bot_barber, handle_signals=True)),
-        asyncio.create_task(dp_admin.start_polling(bot_admin, handle_signals=True)),
-        asyncio.create_task(dp_client.start_polling(bot_client, handle_signals=True)),
+        asyncio.create_task(dp_barber.start_polling(bot_barber, handle_signals=False)),
+        asyncio.create_task(dp_admin.start_polling(bot_admin, handle_signals=False)),
+        asyncio.create_task(dp_client.start_polling(bot_client, handle_signals=False)),
     ]
 
     try:
