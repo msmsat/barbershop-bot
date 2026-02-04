@@ -22,3 +22,4 @@ barbershop.db
 # --- Google Calendar Ключи ---
 credentials.json
 token.json
+*.json
