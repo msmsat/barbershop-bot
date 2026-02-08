@@ -397,7 +397,7 @@ async def set_pay_payments(call: CallbackQuery):
         description="Оплата услуги через Portmone",
         payload=json.dumps(data),
         provider_token=PORTMONE_TEST_TOKEN,
-        currency="RUB",
+        currency="UAH",
         prices=prices,
         need_email=False
     )
@@ -589,13 +589,33 @@ async def set_book_100_for(call: CallbackQuery):
     # Рекомендую добавить в services.py возврат TG ID барбера, или запросить здесь:
     # Но чтобы код работал сразу:
     try:
-        # Получаем ID барбера для отправки
+        # 1. Получаем ID барбера из базы
         bid = (await database.fetch_one("SELECT barber_id FROM bookings WHERE id=?", (idbook,)))[0]
+        # 2. Получаем TG ID барбера
         btg = (await database.fetch_one("SELECT telegram_id FROM barbers WHERE id=?", (bid,)))[0]
-        await loader.bot_barber.send_message(btg, f"К вам записался @{call.from_user.username} | {date_t_str} {date_d_str} | ...")
-    except:
-        pass
-    # Подтверждение
+
+        # --- [ЗАПОЛНИЛИ ВЕРХНИЙ, УДАЛИЛИ НИЖНИЙ] ---
+
+        # Красивое имя клиента
+        user_name = f"@{call.from_user.username}" if call.from_user.username else f"ID: {call.from_user.id}"
+
+        msg_to_barber = (
+            f"📝 <b>Новая запись!</b>\n"
+            f"👤 Клиент: {user_name}\n"
+            f"🗓 Дата: {date_d.day}.{date_d.month}.{date_d.year}\n"
+            f"⏰ Время: {date_t_str} - {end_t_str}\n"
+            f"💳 Тип: <b>Оплата на месте</b>"
+        )
+
+        # Отправляем красивое сообщение
+        await loader.bot_barber.send_message(btg, msg_to_barber, parse_mode="HTML")
+
+        # -------------------------------------------
+
+    except Exception as e:
+        print(f"Ошибка отправки барберу: {e}")
+
+        # Подтверждение клиенту
     text = f"✅ Бронирование успешно!\nДата: {date_d.day}.{date_d.month}.{date_d.year}\nВремя: {date_t_str} - {end_t_str}\nМастер: {barber_name}"
     await call.message.edit_text(text, reply_markup=client_kb.success_kb(), parse_mode="HTML")
     return
