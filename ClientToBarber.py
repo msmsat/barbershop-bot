@@ -22,21 +22,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ------------------------
-# Try importing refund/payment utilities from BarberToClient.py
-# ------------------------
-portmone_refund = None
-cryptobot_transfer = None
-try:
-    # Attempt import; if functions have other names, adjust accordingly.
-    portmone_refund = _pm_refund
-    cryptobot_transfer = _crypto_invoice
-    logger.info("Imported payment helpers from BarberToClient.py")
-except Exception as e:
-    logger.info("Payment helpers not available from BarberToClient.py — refund operations will be unavailable unless provided.")
-    portmone_refund = None
-    cryptobot_transfer = None
-
-# ------------------------
 # Time / slot utilities (reused/adapted)
 # ------------------------
 def str_to_time(t: str) -> datetime:
@@ -252,7 +237,7 @@ async def handle_cancel_flow(call: CallbackQuery, barber_id: int, barber_name: s
             return
         await call.message.edit_text("Ви впевнені, що хочете відмінити цю бронь? Це видалить запис.", reply_markup=barber_kb.cancel_confirmation(idbook))
         return
-
+    
     if data.startswith("cancel_confirm_"):
         payload = data[len("cancel_confirm_"):]
         try:
@@ -260,53 +245,108 @@ async def handle_cancel_flow(call: CallbackQuery, barber_id: int, barber_name: s
         except Exception:
             await call.answer("Невірний ID.", show_alert=True)
             return
+        
         try:
-            # Получаем данные для уведомления ПЕРЕД удалением (сервис не возвращает детали)
-            r = await database.fetch_one("SELECT usr_id, barber_name, service_name, date, start_time, price FROM bookings WHERE id = ?", (idbook,))
+            # 1. Получаем данные для уведомления ПЕРЕД удалением
+            r = await database.fetch_one(
+                "SELECT usr_id, barber_name, service_name, date, start_time, price FROM bookings WHERE id = ?",
+                (idbook,)
+            )
+            
             if not r:
                 await call.answer("Броня вже видалена.", show_alert=True)
                 return
+            
             usr_id, b_name, service_name, date_d, start_t, price = r
-
-            # Используем сервис для удаления (БД + Календарь)
+            
+            # 2. Удаляем бронь
             if await services.delete_booking(idbook):
+                # 3. Уведомляем клиента
                 try:
-                    # Используем bot_client из loader
-                    await bot_client.send_message(usr_id, f"⚠️ Ваша броня була скасована барбером {b_name}.\nПослуга: {service_name}\nДата: {date_d}\nЧас: {start_t}\nСума: {price}₽")
-                except Exception:
-                    logger.warning(f"Cannot notify client {usr_id} about cancellation {idbook}")
-
+                    msg_client = (f"⚠️ <b>Ваша запись была отменена мастером!</b>\n\n"
+                                  f"💈 Мастер: {b_name}\n"
+                                  f"📅 Дата: {date_d}\n"
+                                  f"⏰ Время: {start_t}\n"
+                                  f"✂️ Услуга: {service_name}\n"
+                                  f"Пожалуйста, выберите другое время или свяжитесь с мастером.")
+                    
+                    # Отправляем сообщение КЛИЕНТУ (используем bot_client)
+                    await bot_client.send_message(usr_id, msg_client, parse_mode="HTML")
+                except Exception as e:
+                    logger.warning(f"Cannot notify client {usr_id} about cancellation {idbook}: {e}")
+                
                 await call.message.edit_text("✅ Броня відмінена та клієнт повідомлений.", reply_markup=barber_kb._back_btn("main_menu"))
             else:
                 await call.answer("Помилка видалення.", show_alert=True)
+        
         except Exception as e:
             logger.exception(f"Error cancelling booking {idbook}: {e}")
             await call.answer("Сталася помилка при відміні броні.", show_alert=True)
         return
 
+
 async def handle_refund(call: CallbackQuery, barber_id: int, barber_name: str):
     data = call.data
     payload = data[len("refund_booking_"):]
-    try: idbook = int(payload)
+    try:
+        idbook = int(payload)
     except Exception:
         await call.answer("Невірний ID.", show_alert=True)
         return
-    # fetch booking details to know amount
-    r = await database.fetch_one("SELECT usr_id, price, condition FROM bookings WHERE id = ?", (idbook,))
-    if not r:
+    
+    # 1. Запрашиваем расширенные данные (чтобы было что писать в уведомлении)
+    # Добавили: service_name, start_time, barber_name
+    row = await database.fetch_one(
+        "SELECT usr_id, price, condition, date, service_name, start_time, barber_name FROM bookings WHERE id = ?",
+        (idbook,)
+    )
+    
+    if not row:
         await call.answer("Броня не знайдена.", show_alert=True)
         return
-    usr_id, price, condition = r
+    
+    # Распаковываем всё
+    usr_id, price, condition, date_d, service_name, start_time, b_name = row
+    
     if condition != 'paid':
         await call.answer("Повернення можливе тільки для оплаченої броні.", show_alert=True)
         return
-    success, msg = await services.process_refund(idbook, call.message.chat.id)
+    
+    # 2. Выполняем возврат
+    # (Даже если process_refund не возвращает дату, мы её уже взяли из базы выше в переменную date_d)
+    res = await services.process_refund(idbook, call.message.chat.id)
+    
+    # Обрабатываем результат (учтем, если функция возвращает 2 или 3 значения)
+    if len(res) == 3:
+        success, msg, _ = res
+    else:
+        success, msg = res
+    
     if success:
-        # Конвертируем строку даты обратно в объект для клавиатуры
-        try: date_obj = date.fromisoformat(date_d)
-        except: date_obj = date.today()
-        await call.message.edit_text(f"✅ {msg}", reply_markup=barber_kb.back_to_date(date_obj))
-    else: await call.message.edit_text(f"❌ {msg}")
+        # 3. УВЕДОМЛЯЕМ КЛИЕНТА
+        try:
+            await bot_client.send_message(
+                usr_id,
+                f"💸 <b>Возврат средств!</b>\n"
+                f"Мастер {b_name} отменил вашу запись и вернул средства.\n\n"
+                f"📅 Дата: {date_d}\n"
+                f"⏰ Время: {start_time}\n"
+                f"✂️ Услуга: {service_name}\n"
+                f"💰 Сумма: {price}₽",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.warning(f"Не удалось отправить уведомление клиенту: {e}")
+        
+        # 4. Обновляем меню БАРБЕРА (возвращаем его в календарь)
+        try:
+            date_obj = date.fromisoformat(date_d)
+        except:
+            date_obj = date.today()
+        
+        await call.message.edit_text(f"✅ {msg}\nКлиент уведомлен.", reply_markup=barber_kb.back_to_date(date_obj))
+    else:
+        await call.message.edit_text(f"❌ {msg}")
 
 async def text_render(barber_id:int, used, d):
     if d is None:

@@ -255,7 +255,7 @@ def crypto_actions_kb(date_str, time_str, idbook=None, bot_url=None):
         back_cb = f"pay_online_for{suffix}"
     else:
         suffix = f"_{date_str}_{time_str}"
-        check_cb = "crypto_api_check_"
+        check_cb = f"crypto_api_check_"
         retry_cb = f"pay_crypto{suffix}"
         back_cb = f"pay_online_for{suffix}"
     
@@ -270,9 +270,11 @@ def crypto_actions_kb(date_str, time_str, idbook=None, bot_url=None):
 
 
 # --- ОСТАЛЬНЫЕ ФУНКЦИИ ---
-def crypto_recheck_kb(call_data):
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="♻️ Перепроверить статус", callback_data=call_data)]])
-
+def crypto_recheck_kb(call_data, bot_url=None):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Открыть оплату", url=bot_url)],
+        [InlineKeyboardButton(text="♻️ Перепроверить статус", callback_data=call_data)]
+    ])
 
 def success_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 В главное меню", callback_data="mainMenu")]])

@@ -48,15 +48,48 @@ async def start_cmd(message: Message):
     for serviceId, serviceName, servicePrice in data: text += f'{serviceName}: <b>{servicePrice}₽</b>\n'
     await message.answer(f"👋 Привет! Выберите услугу:\n{text}", reply_markup=client_kb.main_menu(data), parse_mode="HTML")
 
+
 @dp.callback_query(F.data.startswith("mainMenu"))
 async def main_menu_handler(call: CallbackQuery):
     """Возврат в главное меню"""
     # Если это удаление брони перед возвратом
     if call.data.startswith("mainMenu_really_"):
         idbook = call.data[len("mainMenu_really_"):]
-        # --- GOOGLE CALENDAR: Удаление ---
-        await services.delete_booking(int(idbook))
-        # ---------------------------------
+        
+        # --- НОВАЯ ЛОГИКА УВЕДОМЛЕНИЯ БАРБЕРА ---
+        try:
+            # 1. Получаем данные брони ПЕРЕД удалением
+            b_row = await database.fetch_one(
+                "SELECT barber_id, date, start_time, service_name FROM bookings WHERE id = ?",
+                (idbook,)
+            )
+            
+            # 2. Удаляем бронь
+            await services.delete_booking(int(idbook))
+            
+            # 3. Если данные были, ищем барбера и шлем ему сообщение
+            if b_row:
+                barber_id, date_d, start_t, s_name = b_row
+                # Ищем Telegram ID барбера
+                tg_row = await database.fetch_one("SELECT telegram_id FROM barbers WHERE id = ?", (barber_id,))
+                
+                if tg_row and tg_row[0]:
+                    barber_tg_id = tg_row[0]
+                    # Красивое имя клиента
+                    client_name = f"@{call.from_user.username}" if call.from_user.username else f"ID:{call.from_user.id}"
+                    
+                    msg = (f"❌ <b>Отмена записи клиентом!</b>\n"
+                           f"👤 Клиент: {client_name}\n"
+                           f"📅 Дата: {date_d}\n"
+                           f"⏰ Время: {start_t}\n"
+                           f"✂️ Услуга: {s_name}")
+                    
+                    # Отправляем сообщение барберу (используем bot_barber из loader)
+                    await loader.bot_barber.send_message(barber_tg_id, msg, parse_mode="HTML")
+        except Exception as e:
+            print(f"Ошибка при уведомлении барбера: {e}")
+        # ----------------------------------------
+        
         st_text = '✅ Бронь удачно удалена'
     else:
         st_text = '👋 Привет! Выберите услугу:'
@@ -165,20 +198,53 @@ async def set_cancel_book(call: CallbackQuery):
         await call.message.edit_text(text, reply_markup=client_kb.cancel_confirm(idbook, condition), parse_mode="HTML")
         return
 
+
 @dp.callback_query(F.data.startswith("money_back_"))
 async def set_money_back(call: CallbackQuery):
     idbook = call.data[len("money_back_"):]
-    # Получаем данные о брони
-    result = await database.fetch_one("SELECT usr_id, telegram_payment_charge_id, price, paid_think, date FROM bookings WHERE id = ?", (idbook,))
+    
+    # 1. ЗАПРАШИВАЕМ БОЛЬШЕ ДАННЫХ (добавили barber_id, service_name, start_time)
+    result = await database.fetch_one(
+        """SELECT usr_id, telegram_payment_charge_id, price, paid_think, date,
+                  barber_id, service_name, start_time
+           FROM bookings WHERE id = ?""",
+        (idbook,)
+    )
+    
     if result is None:
         await call.message.edit_text("Ошибка: бронь не найдена.")
         return
-    usr_id, charge_id, price, paid_think, dd = result
+    
+    # Распаковываем
+    usr_id, charge_id, price, paid_think, dd, barber_id, service_name, start_time = result
+    
     if paid_think is None:
-        await call.message.edit_text("Ошибка: нет данных для возврата (возможно, оплаты небыло).")
+        await call.message.edit_text("Ошибка: нет данных для возврата (возможно, оплаты не было).")
         return
+    
+    # 2. ВЫПОЛНЯЕМ ВОЗВРАТ
     success, msg = await services.process_refund(idbook, call.message.chat.id)
+    
     if success:
+        # 3. УВЕДОМЛЯЕМ БАРБЕРА (Новый код)
+        try:
+            tg_row = await database.fetch_one("SELECT telegram_id FROM barbers WHERE id = ?", (barber_id,))
+            if tg_row and tg_row[0]:
+                barber_tg_id = tg_row[0]
+                user_link = f"@{call.from_user.username}" if call.from_user.username else f"ID:{call.from_user.id}"
+                
+                msg_to_barber = (
+                    f"💸 <b>Клиент оформил возврат!</b>\n"
+                    f"👤 Клиент: {user_link}\n"
+                    f"📅 Дата: {dd}\n"
+                    f"⏰ Время: {start_time}\n"
+                    f"✂️ Услуга: {service_name}\n"
+                    f"💰 Сумма возврата: {price}₽"
+                )
+                await loader.bot_barber.send_message(barber_tg_id, msg_to_barber, parse_mode="HTML")
+        except Exception as e:
+            print(f"Ошибка уведомления барбера о возврате: {e}")
+        
         await call.message.edit_text(f"✅ {msg}", reply_markup=client_kb.back_to_main())
     else:
         await call.message.edit_text(f"❌ {msg}")
@@ -322,7 +388,7 @@ async def set_pay_payments(call: CallbackQuery):
                                 await database.fetch_one("SELECT choose, any_service FROM users WHERE name = ?",
                                                          (call.from_user.id,)))
     price = int((await database.fetch_one("SELECT price FROM services WHERE id = ?", (service_id,)))[0])
-    prices = [LabeledPrice(label="Оплата услуги", amount=price)]  # 100 UAH = 10000 копеек
+    prices = [LabeledPrice(label="Оплата услуги", amount=price*100)]  # 100 UAH = 10000 копеек
 
     data = {"usr_id": call.from_user.id, "date": date_d_str, "start_time": date_t_str, "after_id": after_id}
     await bot.send_invoice(
@@ -331,7 +397,7 @@ async def set_pay_payments(call: CallbackQuery):
         description="Оплата услуги через Portmone",
         payload=json.dumps(data),
         provider_token=PORTMONE_TEST_TOKEN,
-        currency="UAH",
+        currency="RUB",
         prices=prices,
         need_email=False
     )
@@ -371,6 +437,7 @@ async def set_pay_crypto(call: CallbackQuery):
 
     # 4. Обработка ОШИБКИ создания
     if invoice_id is None or bot_url is None:
+        print(j)
         if j == 502: msg = "❌ Не удалось создать счёт автоматически. Проблемы на сервере крипты — Попробуйте снова позже"
         else: msg = "❌ Не удалось создать счёт автоматически — Попробуйте снова"
         await call.message.edit_text(
@@ -415,7 +482,7 @@ async def set_crypto_api_check(call: CallbackQuery):
         call_data = f"crypto_api_check_{invoice_id}"
     status = await services.check_crypto_invoice_status(int(invoice_id))
     if status is None:
-        await call.message.edit_text(f"Ошибка при запросе статуса. Попробуйте позже.", reply_markup=client_kb.crypto_recheck_kb(call_data), parse_mode="HTML")
+        await call.message.edit_text(f"Ошибка при запросе статуса. Попробуйте позже.", reply_markup=client_kb.crypto_recheck_kb(call_data, bot_url), parse_mode="HTML")
         return
 
     if status == "paid":
@@ -434,9 +501,9 @@ async def set_crypto_api_check(call: CallbackQuery):
                 try:
                     # Надежно получаем ID барбера по ID созданной брони
                     barber_row = await database.fetch_one(
-                        """SELECT b.telegram_id 
-                           FROM bookings k 
-                           JOIN barbers b ON k.barber_id = b.id 
+                        """SELECT b.telegram_id
+                           FROM bookings k
+                           JOIN barbers b ON k.barber_id = b.id
                            WHERE k.id = ?""",
                         (idbook,)
                     )
@@ -463,7 +530,7 @@ async def set_crypto_api_check(call: CallbackQuery):
     else:
         await call.message.edit_text(
             f"Статус счета: {status}. Если оплатили — дождитесь уведомления или попробуйте позже.",
-            reply_markup=client_kb.crypto_recheck_kb(call_data), parse_mode="HTML")
+            reply_markup=client_kb.crypto_recheck_kb(call_data, bot_url), parse_mode="HTML")
         return
 
 @dp.callback_query(F.data.startswith("pay_telegram_stars_"))
