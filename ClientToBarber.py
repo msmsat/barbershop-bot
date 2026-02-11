@@ -435,7 +435,7 @@ async def handle_offdays(call: CallbackQuery, barber_id: int, barber_name: str):
         
         if dd <= date.today():  # Исправил на <=, чтобы сегодня тоже нельзя было менять, если это прошлое
             await call.answer("Невозможно изменить прошлое.", show_alert=True)
-        return
+            return
         
         try:
             # Определяем дату просмотра (чтобы календарь не скакал)
