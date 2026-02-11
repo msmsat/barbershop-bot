@@ -120,6 +120,11 @@ async def init_db():
             )
         """)
         
+        try:
+            await db.execute("ALTER TABLE barbers ADD COLUMN reminders INTEGER DEFAULT 1")
+        except Exception:
+            pass
+        
         # Заполнение данными по умолчанию (если пусто)
         await _seed_data(db)
         

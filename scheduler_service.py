@@ -46,7 +46,7 @@ async def _clean_offdays():
     for oid, bid, dstr in rows:
         await database.execute("DELETE FROM off_days WHERE id = ?", (oid,))
         # Уведомляем барбера, если найдем
-        if (tb := await database.fetch_one("SELECT telegram_id FROM barbers WHERE id = ?", (bid,))) and tb[0]:
+        if (tb := await database.fetch_one("SELECT telegram_id, reminders FROM barbers WHERE id = ?", (bid,))) and tb[0] and tb[1]:
             await _safe_send(bot_barber, tb[0], f"📆 Прошедший выходной {dstr} удален.")
 
 
@@ -83,7 +83,7 @@ async def _process_reminders(now: int):
             
             await _safe_send(bot_client, uid, f"⏰ <b>Напоминание!</b>\nЧерез {type_h} час(а) запись!\n💈 {b_name}\n🗓 {nice_date} в {d_time}")
             
-            if bar_id and (tb := await database.fetch_one("SELECT telegram_id FROM barbers WHERE id = ?", (bar_id,))) and tb[0]:
+            if bar_id and (tb := await database.fetch_one("SELECT telegram_id, reminders FROM barbers WHERE id = ?", (bar_id,))) and tb[0] and tb[1]:
                 await _safe_send(bot_barber, tb[0], f"🔔 <b>Мастеру:</b> Через {type_h} час(а) клиент:\nID: {uid} | {s_name} | {d_time}")
 
 
