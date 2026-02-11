@@ -118,7 +118,7 @@ def off_days_calendar(days_list: list, today: date, days_in_month: int, date_vie
     for d in days_list:
         if d > today:
             # Проверяем, есть ли дата в списке выходных (off_days)
-            btn_text = f"🔴 {d.day}" if d.isoformat() in off_days else str(d.day)
+            btn_text = f"✅ {d.day}" if d in off_days else f"✖️ {d.day}"
             row.append(_btn(btn_text, f"offday_toggle_{d.isoformat()}"))
         
         if len(row) >= 5:  # 5 кнопок в ряд (красивее чем 4)
